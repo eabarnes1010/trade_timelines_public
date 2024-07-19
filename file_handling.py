@@ -17,6 +17,18 @@ DATA_DIRECTORY = "/Users/eabarnes/big_data/"
 PROCESSED_DIRECTORY = "processed_data/"
 
 
+def convert_longitudes(da):
+
+    data_lons = da["lon"].values
+    i = np.where(data_lons <= 0)
+    data_lons[i] = data_lons[i] + 360
+    i = np.where(data_lons >= 359.93)
+    data_lons[i] = 0.0
+    da = da.assign_coords(lon=data_lons)
+    da = da.sortby("lon")
+    return da
+
+
 def load_metrics(filename):
     with gzip.open(filename, "rb") as fp:
         reporter_code_list = pickle.load(fp)
@@ -68,7 +80,7 @@ def load_climate_data(settings, DATA_DIRECTORY):
     if settings["gcm"] == "mpi":
         for ens in range(settings["n_members"]):
             # get member
-            member_text = f"{ens+1:03}"
+            member_text = f"{ens + 1:03}"
             print("ensemble member = " + member_text)
 
             if settings["var"] == "mrsos":
@@ -155,7 +167,7 @@ def load_climate_data(settings, DATA_DIRECTORY):
                     break
 
                 for ens in np.arange(0, 20):
-                    member_text = f"{iy}.{ens+1:03}"
+                    member_text = f"{iy}.{ens + 1:03}"
                     realm = "mon"
                     if settings["var"] == "tas":
                         var = "TREFHT"

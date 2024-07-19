@@ -38,8 +38,13 @@ def get_population(filepath, da_grid):
                 eval_lon = 361.0
             else:
                 eval_lon = da_grid["lon"][ilon + 1]
-            ilat_pop = np.where((da_pop["lat"] >= da_grid["lat"][ilat]) & (da_pop["lat"] < da_grid["lat"][ilat + 1]))[0]
-            ilon_pop = np.where((da_pop["lon"] >= da_grid["lon"][ilon]) & (da_pop["lon"] < eval_lon))[0]
+            ilat_pop = np.where(
+                (da_pop["lat"] >= da_grid["lat"][ilat])
+                & (da_pop["lat"] < da_grid["lat"][ilat + 1])
+            )[0]
+            ilon_pop = np.where(
+                (da_pop["lon"] >= da_grid["lon"][ilon]) & (da_pop["lon"] < eval_lon)
+            )[0]
 
             da_pop_regrid[ilat, ilon] = da_pop[ilat_pop, ilon_pop].sum(("lat", "lon"))
 
@@ -51,7 +56,9 @@ def get_population(filepath, da_grid):
 def compute_extremes_response(settings, data_directory):
     data_out = None
 
-    for var, tail, perc in zip(settings["var_list"], settings["response_tail"], settings["response_threshold"]):
+    for var, tail, perc in zip(
+        settings["var_list"], settings["response_tail"], settings["response_threshold"]
+    ):
         print(f"computing extremes for {var}, {tail}, {perc}")
 
         settings.update({"var": var})
@@ -60,7 +67,12 @@ def compute_extremes_response(settings, data_directory):
 
         # define baseline months
         data_baseline = (
-            data.loc[:, str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]), :, :]
+            data.loc[
+                :,
+                str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]),
+                :,
+                :,
+            ]
             .groupby("time.month")
             .mean(("member", "time"))
         )
@@ -73,7 +85,8 @@ def compute_extremes_response(settings, data_directory):
         # define anomalies based on monthly baselines, nan out non-growing seasons
         for month in np.arange(1, 13):
             data[:, data.time.dt.month == month, :, :] = (
-                data[:, data.time.dt.month == month, :, :] - data_baseline[month - 1, :, :]
+                data[:, data.time.dt.month == month, :, :]
+                - data_baseline[month - 1, :, :]
             )
 
         # define extremes based on percentiles
@@ -81,29 +94,49 @@ def compute_extremes_response(settings, data_directory):
         for month in np.arange(1, 13):
             da_month = data[:, data.time.dt.month == month, :, :]
             baseline_threshold = np.percentile(
-                da_month.loc[:, str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]), :, :],
+                da_month.loc[
+                    :,
+                    str(settings["baseline_years"][0]) : str(
+                        settings["baseline_years"][1]
+                    ),
+                    :,
+                    :,
+                ],
                 perc,
                 axis=(0, 1),
             )
 
             if tail == "above":
-                da_response[:, data.time.dt.month == month, :, :] = xr.where(da_month > baseline_threshold, 1.0, 0.0)
+                da_response[:, data.time.dt.month == month, :, :] = xr.where(
+                    da_month > baseline_threshold, 1.0, 0.0
+                )
             elif tail == "below":
-                da_response[:, data.time.dt.month == month, :, :] = xr.where(da_month < baseline_threshold, 1.0, 0.0)
+                da_response[:, data.time.dt.month == month, :, :] = xr.where(
+                    da_month < baseline_threshold, 1.0, 0.0
+                )
             elif tail == "below_above":
                 baseline_threshold_above = np.percentile(
-                    da_month.loc[:, str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]), :, :],
+                    da_month.loc[
+                        :,
+                        str(settings["baseline_years"][0]) : str(
+                            settings["baseline_years"][1]
+                        ),
+                        :,
+                        :,
+                    ],
                     100.0 - perc,
                     axis=(0, 1),
                 )
 
+                # below calculation
                 da_response[:, data.time.dt.month == month, :, :] = xr.where(
-                    (da_month < baseline_threshold) | (da_month > baseline_threshold_above), 1.0, 0.0
+                    (da_month < baseline_threshold), 10.0, 0.0
+                )
+                # above calculation
+                da_response[:, data.time.dt.month == month, :, :] = xr.where(
+                    (da_month > baseline_threshold_above), 20.0, da_response[:, data.time.dt.month == month, :, :]
                 )
 
-                # da_response[:, data.time.dt.month == month, :, :] = xr.where(
-                #     (da_month < baseline_threshold), 1.0, 0.0
-                # )
             else:
                 raise NotImplementedError
 
@@ -112,11 +145,18 @@ def compute_extremes_response(settings, data_directory):
         else:
             data_out = data_out + da_response
 
-    data_out = xr.where(data_out == len(settings["var_list"]), 1.0, 0.0)
+    # print(np.unique(data_out))
+    # FIXME: this code is not general, it is specific to the below_above tail
+    data_out = xr.where((data_out != 11.0) & (data_out != 21.0), 0.0, data_out)
+    data_out = xr.where(data_out == 11, 1.0, data_out)
+    data_out = xr.where(data_out == 21, 2.0, data_out)
 
-    # WINDOW THE DATA OVER WINDOW LENGTHS WITHIN THE RESPONSE_YEARS_RANGE and TAKE THE MEAN
+    # WINDOW THE DATA OVER WINDOW LENGTHS WITHIN THE RESPONSE_YEARS_RANGE and TAKE THE MAX to reduce the window down to one number.
     # data_out = window_data_w_mean(data_out, settings)
+
+    print(data_out.shape)
     data_out = window_data_w_max(data_out, settings)
+    print(data_out.shape)
 
     return data_out
 
@@ -131,7 +171,11 @@ def compute_reanalysis_baseline(settings, data_directory, data_like):
 
     # define baseline months
     data_baseline = (
-        data.loc[str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]), :, :]
+        data.loc[
+            str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]),
+            :,
+            :,
+        ]
         .groupby("time.month")
         .mean("time")
     )
@@ -152,7 +196,12 @@ def compute_anomalies(settings, data_directory):
 
     # define baseline months
     data_baseline = (
-        data.loc[:, str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]), :, :]
+        data.loc[
+            :,
+            str(settings["baseline_years"][0]) : str(settings["baseline_years"][1]),
+            :,
+            :,
+        ]
         .groupby("time.month")
         .mean(("member", "time"))
     )
@@ -192,14 +241,17 @@ def growing_season_mask(data, settings):
 
     # loop through all gridpoints
     for ilat in range(len(data["lat"])):
-        ilat_grab = np.argmin(np.abs(data["lat"][ilat].values - da_grow["latitude"].values))
+        ilat_grab = np.argmin(
+            np.abs(data["lat"][ilat].values - da_grow["latitude"].values)
+        )
 
         for ilon in range(len(data_lon)):
             ilon_grab = np.argmin(np.abs(data_lon[ilon] - da_grow["longitude"].values))
 
             # # get the growing season start and end for each gridpoint
             month_list = get_growing_month_list(
-                da_grow[grow_start][ilat_grab, ilon_grab].values, da_grow[grow_stop][ilat_grab, ilon_grab].values
+                da_grow[grow_start][ilat_grab, ilon_grab].values,
+                da_grow[grow_stop][ilat_grab, ilon_grab].values,
             )
 
             # check if there is a second growing season, if so, append months to the first season
@@ -208,7 +260,9 @@ def growing_season_mask(data, settings):
                     da_grow2[grow_start][ilat_grab, ilon_grab].values,
                     da_grow2[grow_stop][ilat_grab, ilon_grab].values,
                 )
-                month_list = np.unique(np.append(month_list, month_list_second, axis=0).astype(int))
+                month_list = np.unique(
+                    np.append(month_list, month_list_second, axis=0).astype(int)
+                )
 
             # nan out the baseline for not the growing season
             month_mask = np.isin(all_months, month_list, assume_unique=True)
@@ -219,8 +273,12 @@ def growing_season_mask(data, settings):
 
 def get_growing_month_list(start_doy, end_doy):
     try:
-        start_month = datetime.datetime(2030, 1, 1) + datetime.timedelta(start_doy - 1)
-        end_month = datetime.datetime(2030, 1, 1) + datetime.timedelta(end_doy - 1)
+        start_month = datetime.datetime(2030, 1, 1) + datetime.timedelta(
+            int(np.floor(start_doy)) - 1
+        )
+        end_month = datetime.datetime(2030, 1, 1) + datetime.timedelta(
+            int(np.ceil(end_doy)) - 1
+        )
 
         start_month = start_month.month
         end_month = end_month.month
@@ -234,29 +292,48 @@ def get_growing_month_list(start_doy, end_doy):
     else:
         start_date = "2030-" + str(int(start_month)) + "-01"
         end_date = "2030-" + str(int(end_month)) + "-01"
-        month_list = np.asarray(pd.date_range(start_date, end_date, freq="MS").strftime("%m").tolist(), dtype=int)
+        month_list = np.asarray(
+            pd.date_range(start_date, end_date, freq="MS").strftime("%m").tolist(),
+            dtype=int,
+        )
 
         if not np.any(month_list):
             end_date = "2031-" + str(int(end_month)) + "-01"
-            month_list = np.asarray(pd.date_range(start_date, end_date, freq="MS").strftime("%m").tolist(), dtype=int)
+            month_list = np.asarray(
+                pd.date_range(start_date, end_date, freq="MS").strftime("%m").tolist(),
+                dtype=int,
+            )
 
     return month_list
 
 
 def window_data_w_mean(data, settings):
     data = data.loc[
-        {data.dims[1]: slice(str(settings["response_year_range"][0]), str(settings["response_year_range"][1]))}
+        {
+            data.dims[1]: slice(
+                str(settings["response_year_range"][0]),
+                str(settings["response_year_range"][1]),
+            )
+        }
     ]
 
     d = None
     response_years = np.unique(data["time.year"])
-    for year in np.arange(response_years[0], response_years[-1] + 1, settings["window_len"]):
+    for year in np.arange(
+        response_years[0], response_years[-1] + 1, settings["window_len"]
+    ):
         if (year + settings["window_len"]) - 1 > response_years[-1]:
             break
 
         if d is None:
             d = (
-                data.loc[{data.dims[1]: slice(str(year), str((year + settings["window_len"]) - 1))}]
+                data.loc[
+                    {
+                        data.dims[1]: slice(
+                            str(year), str((year + settings["window_len"]) - 1)
+                        )
+                    }
+                ]
                 .mean(axis=1, skipna=True)
                 .expand_dims({"window": np.arange(year, year + 1)})
             )
@@ -265,7 +342,13 @@ def window_data_w_mean(data, settings):
             d = xr.concat(
                 [
                     d,
-                    data.loc[{data.dims[1]: slice(str(year), str((year + settings["window_len"]) - 1))}]
+                    data.loc[
+                        {
+                            data.dims[1]: slice(
+                                str(year), str((year + settings["window_len"]) - 1)
+                            )
+                        }
+                    ]
                     .mean(axis=1, skipna=True)
                     .expand_dims({"window": np.arange(year, year + 1)}),
                 ],
@@ -277,18 +360,31 @@ def window_data_w_mean(data, settings):
 
 def window_data_w_max(data, settings):
     data = data.loc[
-        {data.dims[1]: slice(str(settings["response_year_range"][0]), str(settings["response_year_range"][1]))}
+        {
+            data.dims[1]: slice(
+                str(settings["response_year_range"][0]),
+                str(settings["response_year_range"][1]),
+            )
+        }
     ]
 
     d = None
     response_years = np.unique(data["time.year"])
-    for year in np.arange(response_years[0], response_years[-1] + 1, settings["window_len"]):
+    for year in np.arange(
+        response_years[0], response_years[-1] + 1, settings["window_len"]
+    ):
         if (year + settings["window_len"]) - 1 > response_years[-1]:
             break
 
         if d is None:
             d = (
-                data.loc[{data.dims[1]: slice(str(year), str((year + settings["window_len"]) - 1))}]
+                data.loc[
+                    {
+                        data.dims[1]: slice(
+                            str(year), str((year + settings["window_len"]) - 1)
+                        )
+                    }
+                ]
                 .max(axis=1, skipna=True)
                 .expand_dims({"window": np.arange(year, year + 1)})
             )
@@ -297,7 +393,13 @@ def window_data_w_max(data, settings):
             d = xr.concat(
                 [
                     d,
-                    data.loc[{data.dims[1]: slice(str(year), str((year + settings["window_len"]) - 1))}]
+                    data.loc[
+                        {
+                            data.dims[1]: slice(
+                                str(year), str((year + settings["window_len"]) - 1)
+                            )
+                        }
+                    ]
                     .max(axis=1, skipna=True)
                     .expand_dims({"window": np.arange(year, year + 1)}),
                 ],
@@ -321,7 +423,9 @@ def get_growing_seasons_data(settings):
         file = SEASONS_DIRECTORY + "Soybeans.crop.calendar.fill.nc"
         file2 = None
     elif settings["product"] == "all":
-        raise ValueError("there is not way to define a growing seasons across multiple crops.")
+        raise ValueError(
+            "there is not way to define a growing seasons across multiple crops."
+        )
     else:
         raise NotImplementedError("no such file.")
 
@@ -364,28 +468,55 @@ def process_member(settings, da):
     return da
 
 
-def get_cropped_area_mask(CROP_DIRECTORY, settings):
-    filename = CROP_DIRECTORY + settings["product"] + "_cropped_regrid_" + settings["gcm"] + ".nc"
-    print("loading crop areas from " + filename)
+def get_cropped_area_mask(CROP_DIRECTORY, settings, include_irrigated=True):
 
-    return xr.load_dataarray(filename)
+    if include_irrigated:
+        filename = (
+            CROP_DIRECTORY + settings["product"] + "_" + settings["gcm"] + "_regrid.nc"
+        )
+        print("loading crop areas from " + filename)
+        return xr.load_dataarray(filename)
+    else:
+        filename = (
+            CROP_DIRECTORY
+            + settings["product"]
+            + "_unirrigated_"
+            + settings["gcm"]
+            + "_regrid.nc"
+        )
+        print("loading crop areas from " + filename)
+        return xr.load_dataarray(filename)
 
 
 def get_country_masks(settings, SHAPE_DIRECTORY, DATA_DIRECTORY):
 
     country_loadfile = SHAPE_DIRECTORY + "countries_10m_" + settings["gcm"] + ".nc"
     regs_shp = gpd.read_file(SHAPE_DIRECTORY + "20230301_gtapv11.shp")
-    regs_shp = regs_shp.dissolve(by="REG", as_index=False).sort_values(by="GTAPID").reset_index(drop=True)
+    regs_shp = (
+        regs_shp.dissolve(by="REG", as_index=False)
+        .sort_values(by="GTAPID")
+        .reset_index(drop=True)
+    )
 
     if os.path.exists(country_loadfile):
         print("loading " + country_loadfile)
-        mask_country = xr.load_dataarray(SHAPE_DIRECTORY + "countries_10m_" + settings["gcm"] + ".nc")
+        mask_country = xr.load_dataarray(
+            SHAPE_DIRECTORY + "countries_10m_" + settings["gcm"] + ".nc"
+        )
     else:
-        pass_settings = {"gcm": settings["gcm"], "var": "tas", "n_members": 1, "data_years": (2020, 2040), "avg_frequency": "month"}
+        pass_settings = {
+            "gcm": settings["gcm"],
+            "var": "tas",
+            "n_members": 1,
+            "data_years": (2020, 2040),
+            "avg_frequency": "month",
+        }
 
         da_all = file_handling.load_climate_data(pass_settings, DATA_DIRECTORY)
         mask_country = regionmask.mask_geopandas(regs_shp, da_all.lon, da_all.lat)
-        mask_country.to_netcdf(SHAPE_DIRECTORY + "countries_10m_" + settings["gcm"] + ".nc")
+        mask_country.to_netcdf(
+            SHAPE_DIRECTORY + "countries_10m_" + settings["gcm"] + ".nc"
+        )
 
     return mask_country, regs_shp
 
@@ -448,7 +579,9 @@ def convert_lons(x):
 def get_closest_gridpoint(regs_shp, code, mask_country):
     country_centroid = regs_shp[regs_shp["REG"] == code].centroid
     ilat = np.argmin(np.abs(mask_country["lat"] - country_centroid.y.values[0]).values)
-    ilon = np.argmin(np.abs(mask_country["lon"] - convert_lons(country_centroid.x.values[0])).values)
+    ilon = np.argmin(
+        np.abs(mask_country["lon"] - convert_lons(country_centroid.x.values[0])).values
+    )
 
     return ilat, ilon
 

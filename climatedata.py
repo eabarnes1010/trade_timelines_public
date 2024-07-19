@@ -36,11 +36,17 @@ def get_climate_data(settings, rewrite, save):
     data = data.stack(sample=("member", "window")).transpose("sample", "lat", "lon")
     print(f"final samples.shape = {data.shape}")
 
-    return data
+    # convert to hot-wet and hot-dry
+    data_hotdry = xr.where(data == 1, 1.0, 0.0)
+    data_hotwet = xr.where(data == 2, 1.0, 0.0)
+
+    return data_hotwet, data_hotdry
 
 
 def get_reanalysis_baseline(settings, data_like=None):
 
-    data_baseline = data_processing.compute_reanalysis_baseline(settings, DATA_DIRECTORY, data_like)
-    print(f"{data_baseline.shape = }")
+    data_baseline = data_processing.compute_reanalysis_baseline(
+        settings, DATA_DIRECTORY, data_like
+    )
+    print(f"{data_baseline.shape=}")
     return data_baseline
