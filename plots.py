@@ -267,7 +267,7 @@ def plot_import_cov(
     )
     plt.gca().set_aspect("equal")
 
-    return x
+    return x, cov
 
 
 def remove_offdiagonal(x, remove_diagonal=False):

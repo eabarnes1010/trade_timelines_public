@@ -18,7 +18,7 @@ DATA_DIRECTORY = "/Users/eabarnes/big_data/"
 GTAP_DATA_DIRECTORY = "data/GTAP_data/"
 PROCESSED_DIRECTORY = "processed_data/"
 SHAPE_DIRECTORY = "shapefiles/gadm_shapefiles_20230301_gtapv11/"
-CROP_DIRECTORY = "data/cropland/regridded_cropland/"
+CROP_DIRECTORY = "data/cropgrid/processed_crops/"
 PROCESSED_METRICS_DIRECTORY = "processed_metrics/"
 
 
@@ -45,15 +45,21 @@ def fill_map(x, mask, value):
     if np.isscalar(value):
         return x + mask.fillna(0) * value
     else:
-        return x + mask.fillna(0).expand_dims(dim={"sample": len(np.asarray(value))}) * value[:, np.newaxis, np.newaxis]
+        return (
+            x
+            + mask.fillna(0).expand_dims(dim={"sample": len(np.asarray(value))})
+            * value[:, np.newaxis, np.newaxis]
+        )
 
 
 def replace_zeros(x, fill_value=np.nan):
     return xr.where(x == 0.0, fill_value, x)
 
 
-def get_processed_metrics(data, settings, rewrite=False, save=True, calories=False):
-    metrics_savename = PROCESSED_METRICS_DIRECTORY + settings["exp_name"] + "_processed_metrics.pickle"
+def get_processed_metrics(data_hotwet, data_hotdry, settings, rewrite=False, save=True, calories=False):
+    metrics_savename = (
+        PROCESSED_METRICS_DIRECTORY + settings["exp_name"] + "_processed_metrics.pickle"
+    )
 
     if os.path.isfile(metrics_savename) and not rewrite:
         print(f"   loading pre-saved data from {metrics_savename}")
@@ -72,7 +78,7 @@ def get_processed_metrics(data, settings, rewrite=False, save=True, calories=Fal
             unweighted_stress,
             df_stress,
             df_metrics,
-        ) = compute_cropstress_trade(data, settings)
+        ) = compute_cropstress_trade(data_hotwet, data_hotdry, settings)
 
         # save the data
         if save:
@@ -97,7 +103,9 @@ def get_processed_metrics(data, settings, rewrite=False, save=True, calories=Fal
 
 def get_trade_data(settings, convert_to_calories=False):
     # GET TRADE DATA
-    assert settings["trade_data_year"] == 2017, "we only have data for 2017 from GTAPv11"
+    assert (
+        settings["trade_data_year"] == 2017
+    ), "we only have data for 2017 from GTAPv11"
 
     print("reading trade data: " + GTAP_DATA_DIRECTORY + settings["gtap_filename"])
     data_trade = pd.read_csv(GTAP_DATA_DIRECTORY + settings["gtap_filename"])
@@ -116,43 +124,57 @@ def get_trade_data(settings, convert_to_calories=False):
 
     if convert_to_calories:
         for product in ("gro", "osd", "wht", "pdr"):
-            data_trade.loc[data_trade["COMM"] == product, "TotValue"] = data_trade.TotValue * get_nutritive_factors(product)
+            data_trade.loc[data_trade["COMM"] == product, "TotValue"] = (
+                data_trade.TotValue * get_nutritive_factors(product)
+            )
 
-    data_trade = data_trade.groupby(by=["Source", "Destination"]).sum("TotValue").reset_index()
+    data_trade = (
+        data_trade.groupby(by=["Source", "Destination"]).sum("TotValue").reset_index()
+    )
     if not settings["include_self"]:
-        data_trade = data_trade[data_trade["Source"] != data_trade["Destination"]].reset_index(drop=True)
+        data_trade = data_trade[
+            data_trade["Source"] != data_trade["Destination"]
+        ].reset_index(drop=True)
 
     reporter_code_list = np.unique(data_trade["Destination"])
     reporter_code_list = np.delete(
-        reporter_code_list, np.where(np.isin(reporter_code_list, settings["exclude_regions"]))[0]
+        reporter_code_list,
+        np.where(np.isin(reporter_code_list, settings["exclude_regions"]))[0],
     )
-    print(f"{len(reporter_code_list) = }")
+    print(f"{len(reporter_code_list)=}")
 
     n_partners = len(np.unique(data_trade["Source"]))
-    print(f"{n_partners = }")
+    print(f"{n_partners=}")
 
     # print(data_trade.head())
 
     return data_trade, reporter_code_list, n_partners
 
 
-def compute_cropstress_trade(data, settings):
-    return compute_cropstress_trade_percentage(data, settings)
+def compute_cropstress_trade(data_hotwet, data_hotdry, settings):
+    return compute_cropstress_trade_percentage(data_hotwet, data_hotdry, settings)
 
 
-def compute_cropstress_trade_percentage(data, settings):
+def compute_cropstress_trade_percentage(data_hotwet, data_hotdry, settings):
     # get trade data
     data_trade, reporter_code_list, n_partners = get_trade_data(settings)
 
     # get masks
-    mask_country, regs_shp = data_processing.get_country_masks(settings, SHAPE_DIRECTORY, DATA_DIRECTORY)
+    mask_country, regs_shp = data_processing.get_country_masks(
+        settings, SHAPE_DIRECTORY, DATA_DIRECTORY
+    )
 
     # get cropped area
-    da_crop_area = data_processing.get_cropped_area_mask(CROP_DIRECTORY, settings)
+    da_crop_area = data_processing.get_cropped_area_mask(CROP_DIRECTORY, settings, include_irrigated=True)
+    da_crop_unirr_area = data_processing.get_cropped_area_mask(CROP_DIRECTORY, settings, include_irrigated=False)
 
     # Initalize arrays and maps
-    traded_stress = np.zeros((len(reporter_code_list), np.shape(data)[0], n_partners)) * np.nan
-    unweighted_stress = np.zeros((len(reporter_code_list), np.shape(data)[0], n_partners)) * np.nan
+    traded_stress = (
+        np.zeros((len(reporter_code_list), np.shape(data_hotwet)[0], n_partners)) * np.nan
+    )
+    unweighted_stress = (
+        np.zeros((len(reporter_code_list), np.shape(data_hotwet)[0], n_partners)) * np.nan
+    )
 
     # START THE LOOP THROUGH REPORTERS
     reporter_code_summary = []
@@ -163,10 +185,16 @@ def compute_cropstress_trade_percentage(data, settings):
         # GET REPORTER DATA
         data_reporter = data_trade[data_trade["Destination"] == reporter_code]
 
-        reporter_name = data_processing.get_name_from_code((data_reporter["Destination"].values[0],))
+        reporter_name = data_processing.get_name_from_code(
+            (data_reporter["Destination"].values[0],)
+        )
         reporter_import_dollars = data_reporter["TotValue"].sum()
         reporter_code_summary.append(reporter_code)
-        print(f"{reporter_code}, {reporter_name}, ${reporter_import_dollars:.3f},", end=" ", flush=True)
+        print(
+            f"{reporter_code}, {reporter_name}, ${reporter_import_dollars:.3f},",
+            end=" ",
+            flush=True,
+        )
 
         # GET PARTNER NAMES and DOLLARS
         dollars = data_reporter["TotValue"].values
@@ -185,20 +213,33 @@ def compute_cropstress_trade_percentage(data, settings):
 
             # compute trade fraction over the commodities of interest
             partner_trade_frac = dollars[ip] / reporter_import_dollars
-            if partner_trade_frac == 0 or np.isin(partner_code, settings["exclude_regions"]):
+            if partner_trade_frac == 0 or np.isin(
+                partner_code, settings["exclude_regions"]
+            ):
                 continue
 
             # find partner in shapefile dataframe for geographic points
-            mask_partner = data_processing.create_country_mask(partner_code, regs_shp, mask_country)
+            mask_partner = data_processing.create_country_mask(
+                partner_code, regs_shp, mask_country
+            )
 
-            # further mask the partner and reporter by cropped area
+            # further mask the partner by cropped area
             mask_partner_crop = mask_partner * da_crop_area
-            # mask_reporter_crop = mask_reporter * da_crop_area
+            mask_partner_crop_unirr = mask_partner * da_crop_unirr_area
 
             # RESPONSE CALCULATIONS ACROSS MAPS over CROP AREA ONLY
-            crop_response = data_processing.compute_global_sum(
-                data * mask_partner_crop / data_processing.compute_global_sum(mask_partner_crop)
+            denominator = data_processing.compute_global_sum(mask_partner_crop)
+            crop_response_hotwet = data_processing.compute_global_sum(
+                data_hotwet
+                * mask_partner_crop
+                / denominator
             )
+            crop_response_hotdry = data_processing.compute_global_sum(
+                data_hotdry
+                * mask_partner_crop_unirr
+                / denominator
+            )
+            crop_response = crop_response_hotwet + crop_response_hotdry
             if np.isnan(crop_response[0]):
                 continue
 
@@ -219,7 +260,7 @@ def compute_cropstress_trade_percentage(data, settings):
             "corr_toptwo": corr_toptwo,
         }
 
-        print(f"{corr_localimports = :.2f}, {corr_toptwo = :.2f}", end="\n", flush=True)
+        print(f"{corr_localimports=:.2f}, {corr_toptwo=:.2f}", end="\n", flush=True)
 
     return (
         reporter_code_list,

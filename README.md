@@ -1,4 +1,5 @@
-_"Examining near-term climate stress transmitted via global food trade"_
+_"Exposure to compound climate hazards transmitted via global agricultural trade
+networks"_
 * __paper authors__: Keys, P.W., Barnes, E.A.; Diffenbaugh, N.S.; Hertel, T.; Baldos, U.; Hedlund, J.
 * __code author__: Elizabeth A. Barnes
 
