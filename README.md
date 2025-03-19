@@ -15,11 +15,7 @@ Palettable version: 3.3.3
 ```
 
 ## Publication Link
-Will be posted once paper is published.
-
-## Data Access
-Will be posted once paper is published.
-
+Keys, Patrick W., Elizabeth A. Barnes, Noah S. Diffenbaugh, Thomas W. Hertel, Uris Baldos, and Johanna Hedlund. 2025. “Exposure to Compound Climate Hazards Transmitted via Global Agricultural Trade Networks.” Environmental Research Letters, February. https://doi.org/10.1088/1748-9326/adb86a.
 ## License
 This project is licensed under an MIT license.
 
