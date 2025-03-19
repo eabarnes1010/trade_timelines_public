@@ -4,7 +4,7 @@
 *.bak
 #*.pdf
 #.nc
-*.csv
+# *.csv
 
 *.gdoc
 *.bz2
@@ -19,7 +19,7 @@ figures/
 docs/
 documents/
 archive/
-data/
+# data/
 shapefiles/
 processed_data/
 documents/
